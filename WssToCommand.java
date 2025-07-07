@@ -1,3 +1,4 @@
+//versoin 1.01
 package org.igorgames.wssToCommand;
 
 import org.bukkit.Bukkit;
@@ -39,11 +40,13 @@ public final class WssToCommand extends JavaPlugin {
                 String defaultConfig = "<?xml version=\"1.0\" encoding=\"UTF-8\"?>\n" +
                         "<config>\n" +
                         "  <send>ping</send>\n" +
-                        "  <loops>5</loops>\n" +
+                        "  <loops>10</loops>\n" +
                         "  <wss_list>\n" +
                         "    <wss>\n" +
                         "      <host>ws://localhost:</host>\n" +
                         "      <port>8080</port>\n" +
+                        "      <reconnect>True</reconnect>\n" +
+                        "      <wait_for_reconnect>3</wait_for_reconnect>\n" +
                         "      <send_if_connect>\n" +
                         "        <send>test</send>\n" +
                         "        <send>test123</send>\n" +
@@ -78,7 +81,12 @@ public final class WssToCommand extends JavaPlugin {
             client.dispatcher().executorService().shutdown();
         }
     }
-
+    private void scheduleReconnect(String ip, String port, long loops, String periodicSend, String[] onConnectSend, String[] commands,boolean reconnect,long wait_for_reconnect) {
+        getServer().getScheduler().runTaskLater(this, () -> {
+            getLogger().info("Reconnecting to WebSocket...");
+            connectWebSocket(ip, port, loops, periodicSend, onConnectSend, commands,reconnect,wait_for_reconnect);
+        }, 20L * wait_for_reconnect); // 60 ticks = 3 seconds (Minecraft scheduler)
+    }
     private void readConfig(File xmlFile) {
         try {
             DocumentBuilderFactory factory = DocumentBuilderFactory.newInstance();
@@ -96,7 +104,8 @@ public final class WssToCommand extends JavaPlugin {
 
                 String host = wss.getElementsByTagName("host").item(0).getTextContent();
                 String port = wss.getElementsByTagName("port").item(0).getTextContent();
-
+                boolean reconnect = Boolean.valueOf(wss.getElementsByTagName("reconnect").item(0).getTextContent().toLowerCase());
+                long wait_for_reconnect = Long.parseLong(wss.getElementsByTagName("wait_for_reconnect").item(0).getTextContent());
                 // Read <send_if_connect>
                 NodeList sendNodes = ((Element) wss.getElementsByTagName("send_if_connect").item(0)).getElementsByTagName("send");
                 String[] sendIfConnect = new String[sendNodes.getLength()];
@@ -112,7 +121,7 @@ public final class WssToCommand extends JavaPlugin {
                 }
 
                 // Connect
-                connectWebSocket(host, port, loops, send, sendIfConnect, ifSendMessage);
+                connectWebSocket(host, port, loops, send, sendIfConnect, ifSendMessage,reconnect,wait_for_reconnect);
             }
 
         } catch (Exception e) {
@@ -121,11 +130,10 @@ public final class WssToCommand extends JavaPlugin {
         }
     }
 
-    private void connectWebSocket(String ip, String port, long loops, String periodicSend, String[] onConnectSend, String[] commands) {
+    private void connectWebSocket(String ip, String port, long loops, String periodicSend, String[] onConnectSend, String[] commands,boolean reconnect,long wait_for_reconnect) {
         if (client == null) {
             client = new OkHttpClient();
         }
-
         String url = ip+port;
 
         Request request = new Request.Builder().url(url).build();
@@ -174,6 +182,12 @@ public final class WssToCommand extends JavaPlugin {
             public void onFailure(WebSocket ws, Throwable t, Response response) {
                 getLogger().severe("WebSocket failure: " + t.getMessage());
                 t.printStackTrace();
+
+                // Remove from active
+                activeSockets.remove(ws);
+
+                // Schedule reconnect
+                scheduleReconnect(ip, port, loops, periodicSend, onConnectSend, commands,reconnect,wait_for_reconnect);
             }
 
             @Override
@@ -186,6 +200,9 @@ public final class WssToCommand extends JavaPlugin {
             public void onClosed(WebSocket ws, int code, String reason) {
                 getLogger().info("WebSocket closed: " + reason);
                 activeSockets.remove(ws);
+
+                // Schedule reconnect
+                scheduleReconnect(ip, port, loops, periodicSend, onConnectSend, commands,reconnect,wait_for_reconnect);
             }
         });
     }
