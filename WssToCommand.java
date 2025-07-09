@@ -1,4 +1,4 @@
-//versoin 1.01
+//version 1.01
 package org.igorgames.wssToCommand;
 
 import org.bukkit.Bukkit;
